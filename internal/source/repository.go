@@ -50,8 +50,8 @@ var (
 )
 
 type manifest struct {
-	ExternalSkills []externalSkill `json:"externalSkills"`
-	SkillSets      []SkillSet      `json:"skillSets"`
+	ExternalSkills []externalSkill     `json:"externalSkills"`
+	SkillSets      []SkillSet          `json:"skillSets"`
 	Dependencies   map[string][]string `json:"dependencies"`
 }
 
