@@ -80,7 +80,7 @@ The installer marks installed skills with `✓` and updates with `↑`. Use arro
 
 ```text
 team-skills/
-├── skills.json                       # Optional sets and external entries
+├── skills.json                       # Optional sets, dependencies, and external entries
 └── skills/
     ├── code-review/SKILL.md
     └── personal/test/SKILL.md
@@ -97,7 +97,7 @@ description: A useful test workflow.
 
 The name matches the final directory name. Catalog IDs preserve namespaces (`personal/test`); path segments use lowercase letters, digits, and hyphens. Additional package files can be referenced using relative paths inside the package.
 
-An optional `skills.json` defines sets and pinned external skills:
+An optional `skills.json` defines sets, skill dependencies, and pinned external skills:
 
 ```json
 {
@@ -120,6 +120,22 @@ An optional `skills.json` defines sets and pinned external skills:
 ```
 
 Install with `skills-manager install @review personal/test`. External refs must be full 40- or 64-character commit hashes. External checkouts are shallow, partial, and sparse: only the requested package is materialized.
+
+### Skill dependencies
+
+Declare dependencies by their exact catalog IDs in `skills.json`:
+
+```json
+{
+  "dependencies": {
+    "skill-a": ["tools/mcporter"]
+  }
+}
+```
+
+Both skills must exist in the catalog (under `skills/` or in `externalSkills`). Dependencies can have dependencies of their own. Install commands, sets, and the interactive installer automatically install the complete dependency chain, once per skill, dependencies first. Missing skills, duplicate dependencies, and cycles are rejected before installation.
+
+Updating a skill also updates its dependencies and installs newly required ones. Existing differing packages are never overwritten by `install`; use `update` explicitly. Dependencies are not automatically removed when uninstalling a skill, and manual uninstall can still remove a dependency needed by another skill. This declares dependencies on **skills**, not on binaries: installing a mcporter skill does not install the mcporter executable.
 
 ## Safety
 
