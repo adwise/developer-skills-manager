@@ -21,4 +21,9 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
-      - run: go run ./cmd/skills-manager --help
+      - name: Build and smoke-test the installed CLI
+        env:
+          GOBIN: ${{ runner.temp }}/skills-manager-bin
+        run: |
+          go install ./cmd/skills-manager
+          "$GOBIN/skills-manager" --help
