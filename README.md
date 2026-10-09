@@ -8,25 +8,40 @@ A Git-native CLI for installing agent skills as plain files. Bring your own publ
 
 ### Homebrew (Adwise tap)
 
-The [Adwise tap](https://github.com/adwise/homebrew-brew) has a prepared HEAD-only formula. Once the new CLI repository and tap changes are published:
+After the stable formula is merged into the [Adwise tap](https://github.com/adwise/homebrew-brew):
 
 ```bash
-brew install --HEAD adwise/brew/skills-manager
+brew install adwise/brew/skills-manager
 skills-manager init --source git@github.com:example/team-skills.git
 skills-manager install
 ```
 
-This temporary HEAD installation builds from source and requires Go during the build. Upgrade with `brew upgrade --fetch-HEAD adwise/brew/skills-manager`. After the first stable release is pinned and bottles are published, use `brew install adwise/brew/skills-manager` and `brew upgrade adwise/brew/skills-manager` instead. The new formula is not published yet; the existing `developer-skills` formula still installs the old `skills` command. While the tap or bottles remain private, follow the tap's authentication instructions. A public CLI repository alone does not make private bottles publicly downloadable.
+Upgrade with `brew upgrade adwise/brew/skills-manager`. The stable formula pins a published Git commit so Homebrew can build reproducible bottles. Until bottles are published for your platform, installation builds from source with Go. While the tap or bottles remain private, follow the tap's authentication instructions; the public Go installation below does not require tap access.
 
-### Go / local build
+If you previously installed with `--HEAD`, switch to stable by uninstalling and reinstalling the CLI. This does not remove your skills or configuration:
 
-Requires Go 1.23+ and Git:
+```bash
+brew uninstall skills-manager
+brew install adwise/brew/skills-manager
+```
+
+### Go install (public, no Homebrew required)
+
+Requires Go 1.23+:
 
 ```bash
 go install github.com/adwise/developer-skills-manager/cmd/skills-manager@latest
+export PATH="$(go env GOPATH)/bin:$PATH"
+skills-manager --help
+skills-manager init --source git@github.com:example/team-skills.git
+skills-manager install
 ```
 
-Alternatively, build from a local checkout:
+Go puts the executable in `$(go env GOPATH)/bin` by default. Add the PATH line to your shell profile (`~/.zshrc` or `~/.bashrc`) to keep it available in new terminals. If you set `GOBIN`, add that directory to PATH instead. Repeat `go install ...@latest` to upgrade. Git and access to your source repository are required to fetch skills; Go installation itself does not require access to the private Adwise tap or catalog.
+
+### Local build
+
+From a checkout of this repository:
 
 ```bash
 go build -o build/skills-manager ./cmd/skills-manager
