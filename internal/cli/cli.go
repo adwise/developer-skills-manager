@@ -24,7 +24,10 @@ func RunWithIO(arguments []string, stdin io.Reader, stdout, stderr io.Writer) in
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
+		args = []string{"tui"}
+	}
+	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		usage(stdout)
 		return 0
 	}
@@ -214,6 +217,8 @@ func usage(out io.Writer) {
 	fmt.Fprint(out, `Skills Manager installs agent skills from your Git repository as plain files.
 
 Usage:
+  skills-manager                            Open the interactive installer (default)
+  skills-manager --help                     Show this help
   skills-manager init --source <url-or-path>  Save your source repository
   skills-manager available [query]          List or search available skills
   skills-manager sets                       List skill sets

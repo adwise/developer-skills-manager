@@ -13,7 +13,7 @@ After the stable formula is merged into the [Adwise tap](https://github.com/adwi
 ```bash
 brew install adwise/brew/skills-manager
 skills-manager init --source git@github.com:example/team-skills.git
-skills-manager install
+skills-manager
 ```
 
 Upgrade with `brew upgrade adwise/brew/skills-manager`. The stable formula pins a published Git commit so Homebrew can build reproducible bottles. Until bottles are published for your platform, installation builds from source with Go. While the tap or bottles remain private, follow the tap's authentication instructions; the public Go installation below does not require tap access.
@@ -34,7 +34,7 @@ go install github.com/adwise/developer-skills-manager/cmd/skills-manager@latest
 export PATH="$(go env GOPATH)/bin:$PATH"
 skills-manager --help
 skills-manager init --source git@github.com:example/team-skills.git
-skills-manager install
+skills-manager
 ```
 
 Go puts the executable in `$(go env GOPATH)/bin` by default. Add the PATH line to your shell profile (`~/.zshrc` or `~/.bashrc`) to keep it available in new terminals. If you set `GOBIN`, add that directory to PATH instead. Repeat `go install ...@latest` to upgrade. Git and access to your source repository are required to fetch skills; Go installation itself does not require access to the private Adwise tap or catalog.
@@ -46,7 +46,7 @@ From a checkout of this repository:
 ```bash
 go build -o build/skills-manager ./cmd/skills-manager
 ./build/skills-manager init --source /path/to/team-skills
-./build/skills-manager install
+./build/skills-manager
 ```
 
 Private repositories use your existing Git SSH or credential-helper configuration. Do not embed access tokens in repository URLs; the source URL is saved in configuration and may appear in output.
@@ -75,6 +75,8 @@ Only source and namespace are persisted by `init`; home and cache overrides appl
 ## Commands
 
 ```text
+skills-manager                            Interactive installer (default)
+skills-manager --help                     Show help
 skills-manager init --source <url-or-path>  Configure a source repository
 skills-manager available [query]          List or search skills
 skills-manager sets                       List skill sets
