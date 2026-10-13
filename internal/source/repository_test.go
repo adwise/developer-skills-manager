@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/adwise/developer-skills-manager/internal/skill"
 )
 
 func TestSameRepository(t *testing.T) {
@@ -92,16 +94,65 @@ func TestRemoteRepositoryCloneAndRefresh(t *testing.T) {
 	}
 }
 
+func TestRegistryUsesFrontmatterNameForLocalSkillIDs(t *testing.T) {
+	root := t.TempDir()
+	writeSkillFile(t, filepath.Join(root, "skills", "legacy", "auth", "SKILL.md"), "legacy-auth", "A nested skill.")
+	renamed := filepath.Join(root, "skills", "composer", "auth")
+	writeSkillFile(t, filepath.Join(renamed, "SKILL.md"), "composer-auth", "Composer authentication.")
+	configuration := `{
+  "skillSets": [
+    {"name": "composer", "description": "Composer workflow.", "skills": ["composer-auth"]}
+  ],
+  "dependencies": {
+    "legacy-auth": ["composer-auth"]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "skills.json"), []byte(configuration), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	metadata, err := skill.Validate(renamed)
+	if err != nil {
+		t.Fatalf("validate nested skill: %v", err)
+	}
+	if metadata.Name != "composer-auth" {
+		t.Fatalf("Validate name = %q, want composer-auth", metadata.Name)
+	}
+
+	discovered, err := skill.Discover(filepath.Join(root, "skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, len(discovered))
+	for index, item := range discovered {
+		ids[index] = item.ID
+	}
+	if got, want := strings.Join(ids, ","), "composer-auth,legacy-auth"; got != want {
+		t.Fatalf("Discover IDs = %q, want %q", got, want)
+	}
+
+	catalog, _, err := (Repository{Source: root}).Registry(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Sets) != 1 || strings.Join(catalog.Sets[0].Skills, ",") != "composer-auth" {
+		t.Fatalf("unexpected skill sets: %#v", catalog.Sets)
+	}
+	if got, want := strings.Join(catalog.Dependencies["legacy-auth"], ","), "composer-auth"; got != want {
+		t.Fatalf("dependencies = %q, want %q", got, want)
+	}
+}
+
 func TestRegistrySupportsExternalSkillsAndSets(t *testing.T) {
 	root := t.TempDir()
-	writeSkillFile(t, filepath.Join(root, "skills", "noah", "test", "SKILL.md"), "test", "A personal skill.")
+	writeSkillFile(t, filepath.Join(root, "skills", "noah", "test", "SKILL.md"), "noah-test", "A personal skill.")
 	writeSkillFile(t, filepath.Join(root, "third_party", "agent-browser", "skills", "agent-browser", "SKILL.md"), "agent-browser", "Browser automation.")
 	configuration := `{
   "externalSkills": [
     {"id": "vercel/agent-browser", "path": "third_party/agent-browser/skills/agent-browser"}
   ],
   "skillSets": [
-    {"name": "web", "description": "Web workflow.", "skills": ["noah/test", "vercel/agent-browser"]}
+    {"name": "web", "description": "Web workflow.", "skills": ["noah-test", "vercel/agent-browser"]}
   ]
 }`
 	if err := os.WriteFile(filepath.Join(root, "skills.json"), []byte(configuration), 0o644); err != nil {
@@ -112,7 +163,7 @@ func TestRegistrySupportsExternalSkillsAndSets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Skills) != 2 || catalog.Skills[0].ID != "noah/test" || catalog.Skills[1].ID != "vercel/agent-browser" {
+	if len(catalog.Skills) != 2 || catalog.Skills[0].ID != "noah-test" || catalog.Skills[1].ID != "vercel/agent-browser" {
 		t.Fatalf("unexpected skills: %#v", catalog.Skills)
 	}
 	if len(catalog.Sets) != 1 || catalog.Sets[0].Name != "web" {

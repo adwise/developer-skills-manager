@@ -33,17 +33,95 @@ func TestValidateAndChecksum(t *testing.T) {
 	}
 }
 
-func TestDiscoverSupportsNamespacedSkills(t *testing.T) {
+func TestDiscoverUsesExpectedLocalNamesForNestedSkills(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "code-review", "SKILL.md"), "---\nname: code-review\ndescription: Review code.\n---\n")
-	write(t, filepath.Join(root, "noah", "test", "SKILL.md"), "---\nname: test\ndescription: Noah's test skill.\n---\n")
+	write(t, filepath.Join(root, "noah", "test", "SKILL.md"), "---\nname: noah-test\ndescription: Noah's test skill.\n---\n")
 
 	catalog, err := Discover(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 2 || catalog[0].ID != "code-review" || catalog[1].ID != "noah/test" {
+	if len(catalog) != 2 || catalog[0].ID != "code-review" || catalog[1].ID != "noah-test" {
 		t.Fatalf("unexpected catalog: %#v", catalog)
+	}
+}
+
+func TestValidateAndChecksumAcceptInstalledAndSourceNames(t *testing.T) {
+	root := t.TempDir()
+	for _, test := range []struct {
+		path string
+		name string
+	}{
+		{"git-pull-request", "git-pull-request"}, // Installed package uses its full catalog ID as its leaf.
+		{"git/pull-request", "git-pull-request"}, // Source package uses its parent-prefixed catalog ID.
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			dir := filepath.Join(root, filepath.FromSlash(test.path))
+			write(t, filepath.Join(dir, "SKILL.md"), "---\nname: "+test.name+"\ndescription: Test skill.\n---\n")
+			if _, err := Validate(dir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Checksum(dir); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestDiscoverRejectsUnexpectedLocalNames(t *testing.T) {
+	for name, test := range map[string]struct {
+		skillName string
+		want      string
+	}{
+		"wrong root name":       {"arbitrary-name", "must match directory"},
+		"nested leaf name":      {"pull-request", "local catalog name"},
+		"nested arbitrary name": {"unrelated-name", "must match directory"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "git", "pull-request")
+			if name == "wrong root name" {
+				dir = filepath.Join(root, "pull-request")
+			}
+			write(t, filepath.Join(dir, "SKILL.md"), "---\nname: "+test.skillName+"\ndescription: Test skill.\n---\n")
+			if _, err := Discover(root); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected name error containing %q, got %v", test.want, err)
+			}
+		})
+	}
+}
+
+func TestDistinctNameUsesFrontmatterID(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "composer", "auth")
+	write(t, filepath.Join(dir, "SKILL.md"), "---\nname: composer-auth\ndescription: Manage authentication.\n---\n")
+	metadata, err := Validate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Name != "composer-auth" || metadata.ID != "composer-auth" {
+		t.Fatalf("unexpected metadata: %#v", metadata)
+	}
+	catalog, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 1 || catalog[0].ID != "composer-auth" || catalog[0].Path != dir {
+		t.Fatalf("unexpected catalog: %#v", catalog)
+	}
+	if _, err := Checksum(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiscoverRejectsDuplicateCatalogNames(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"composer/auth", "composer-auth"} {
+		write(t, filepath.Join(root, filepath.FromSlash(path), "SKILL.md"), "---\nname: composer-auth\ndescription: Manage authentication.\n---\n")
+	}
+	if _, err := Discover(root); err == nil || !strings.Contains(err.Error(), "duplicate skill ID") {
+		t.Fatalf("expected duplicate ID error, got %v", err)
 	}
 }
 

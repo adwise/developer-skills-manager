@@ -16,10 +16,10 @@ func TestInstallAndUpdateDependencies(t *testing.T) {
 			root := t.TempDir()
 			repository := filepath.Join(root, "repository")
 			for _, id := range []string{"skill-a", "tools/mcporter", "base", "extra"} {
-				writeSkill(t, filepath.Join(repository, "skills", filepath.FromSlash(id)), "Workflow.", "original\n")
+				writeSkillNamed(t, filepath.Join(repository, "skills", filepath.FromSlash(id)), strings.ReplaceAll(id, "/", "-"), "Workflow.", "original\n")
 			}
 			manifest := filepath.Join(repository, "skills.json")
-			configuration := `{"dependencies":{"skill-a":["tools/mcporter","base"],"tools/mcporter":["base"]},"skillSets":[{"name":"team","skills":["skill-a","base"]}]}`
+			configuration := `{"dependencies":{"skill-a":["tools-mcporter","base"],"tools-mcporter":["base"]},"skillSets":[{"name":"team","skills":["skill-a","base"]}]}`
 			writeManifest := func(contents string) {
 				t.Helper()
 				if err := os.WriteFile(manifest, []byte(contents), 0o644); err != nil {
@@ -32,22 +32,22 @@ func TestInstallAndUpdateDependencies(t *testing.T) {
 			if err := mgr.InstallMany([]string{selector, "base"}); err != nil {
 				t.Fatal(err)
 			}
-			for _, id := range []string{"base", "tools/mcporter", "skill-a"} {
+			for _, id := range []string{"base", "tools-mcporter", "skill-a"} {
 				if strings.Count(output.String(), "Installed "+id+" in") != 1 {
 					t.Fatalf("expected one install of %s: %s", id, output.String())
 				}
 			}
 			// A manifest-only change should show an update in the installer.
-			writeManifest(strings.Replace(configuration, `"tools/mcporter":["base"]`, `"tools/mcporter":["base","extra"]`, 1))
+			writeManifest(strings.Replace(configuration, `"tools-mcporter":["base"]`, `"tools-mcporter":["base","extra"]`, 1))
 			_, _, updates, err := mgr.InstallOptionsWithUpdates()
 			if err != nil || !updates["skill-a"] {
 				t.Fatalf("missing dependency not actionable: %v, %v", updates, err)
 			}
-			writeSkill(t, filepath.Join(repository, "skills", "tools", "mcporter"), "Workflow.", "updated\n")
+			writeSkillNamed(t, filepath.Join(repository, "skills", "tools", "mcporter"), "tools-mcporter", "Workflow.", "updated\n")
 			if err := mgr.Update("skill-a"); err != nil {
 				t.Fatal(err)
 			}
-			contents, err := os.ReadFile(filepath.Join(mgr.GlobalDir, "tools", "mcporter", "SKILL.md"))
+			contents, err := os.ReadFile(filepath.Join(mgr.GlobalDir, "tools-mcporter", "SKILL.md"))
 			if err != nil || !strings.Contains(string(contents), "updated") {
 				t.Fatalf("dependency not updated: %s, %v", contents, err)
 			}

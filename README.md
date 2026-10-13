@@ -107,12 +107,14 @@ Each `SKILL.md` starts with frontmatter:
 
 ```yaml
 ---
-name: test
+name: personal-test
 description: A useful test workflow.
 ---
 ```
 
-The name matches the final directory name. Catalog IDs preserve namespaces (`personal/test`); path segments use lowercase letters, digits, and hyphens. Additional package files can be referenced using relative paths inside the package.
+The frontmatter `name` is always the catalog ID. A package directly under `skills/` must use its directory name (`skills/code-review/SKILL.md` uses `name: code-review`). A nested package uses its immediate parent and directory name joined by a hyphen (`skills/personal/test/SKILL.md` uses `name: personal-test`; `skills/git/pull-request/SKILL.md` uses `name: git-pull-request`). Use that ID in commands, skill sets, and dependencies.
+
+Standalone validation also accepts a package whose name matches its leaf directory, so installed packages can be validated and checksummed under their full catalog ID. Local discovery requires the parent-prefixed form for nested packages. Explicit external IDs keep their namespace semantics and must end with the external package's frontmatter name. Names and path segments use lowercase letters, digits, and hyphens. Additional package files can be referenced using relative paths inside the package.
 
 An optional `skills.json` defines sets, skill dependencies, and pinned external skills:
 
@@ -136,7 +138,7 @@ An optional `skills.json` defines sets, skill dependencies, and pinned external 
 }
 ```
 
-Install with `skills-manager install @review personal/test`. External refs must be full 40- or 64-character commit hashes. External checkouts are shallow, partial, and sparse: only the requested package is materialized.
+Install with `skills-manager install @review personal-test`. External refs must be full 40- or 64-character commit hashes. External checkouts are shallow, partial, and sparse: only the requested package is materialized.
 
 ### Skill dependencies
 
