@@ -47,6 +47,8 @@ type InstallerModel struct {
 	status    string
 	complete  bool
 	cancelled bool
+	playing   bool
+	game      blackjack
 }
 
 func NewInstallerModel(skills []skill.Metadata, sets []source.SkillSet, installed map[string]bool) InstallerModel {
@@ -85,7 +87,19 @@ func (m InstallerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = message.Width
 		m.height = message.Height
 	case tea.KeyMsg:
+		if m.playing && message.String() != "ctrl+c" {
+			switch message.String() {
+			case "q", "esc":
+				m.playing = false
+			default:
+				m.game.play(message.String())
+			}
+			return m, nil
+		}
 		switch message.String() {
+		case "b":
+			m.game = newBlackjack()
+			m.playing = true
 		case "ctrl+c", "esc", "q":
 			m.cancelled = true
 			return m, tea.Quit
@@ -122,10 +136,13 @@ func (m InstallerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m InstallerModel) View() string {
+	if m.playing {
+		return m.game.view()
+	}
 	var output strings.Builder
 	output.WriteString("Manage skills\n\n")
 	if len(m.rows) == 0 {
-		output.WriteString("No skills are available.\n\nq quit\n")
+		output.WriteString("No skills are available.\n\nb blackjack • q quit\n")
 		return output.String()
 	}
 
@@ -202,7 +219,7 @@ func (m InstallerModel) View() string {
 	if m.status != "" {
 		output.WriteString("\n" + m.status + "\n")
 	}
-	output.WriteString("\n↑/↓ move • space select • d remove • enter apply • q cancel\n")
+	output.WriteString("\n↑/↓ move • space select • d remove • enter apply • b blackjack • q cancel\n")
 	return output.String()
 }
 

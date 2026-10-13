@@ -91,6 +91,8 @@ skills-manager validate [path]            Validate a package or repository
 
 The installer marks installed skills with `✓` and updates with `↑`. Use arrows to move, space to select, `d` to mark a removal, enter to apply, and `q` to cancel. Repository-owned skills in `.agents/skills/` are never removed or updated by the installer.
 
+Press `b` in the installer for the “Blackjack and hookers” easter egg (just blackjack, no money or saved scores). Use `h` to hit, `s` to stand, and `n` for a new round after the result. The dealer stands on soft 17. Press `q` or escape to return without changing your skill selections; Ctrl+C cancels the installer.
+
 ## Skill repository format
 
 ```text
