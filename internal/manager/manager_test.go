@@ -95,14 +95,70 @@ func TestInstallDiffUpdateListAndUninstall(t *testing.T) {
 	}
 }
 
-func TestInstallNamespacedSkillAndSkillSet(t *testing.T) {
+func TestInstallUpdateDiffAndUninstallNestedSkillAtFlatDestination(t *testing.T) {
 	root := t.TempDir()
 	repository := filepath.Join(root, "repository")
-	writeSkill(t, filepath.Join(repository, "skills", "noah", "test"), "Personal test workflow.", "# Test\n")
+	sourceDir := filepath.Join(repository, "skills", "composer", "auth")
+	global := filepath.Join(root, "home", ".agents", "skills")
+	writeSkillNamed(t, sourceDir, "composer-auth", "Composer authentication.", "old\n")
+
+	var output bytes.Buffer
+	mgr := Manager{
+		Repository: source.Repository{Source: repository},
+		GlobalDir:  global,
+		Out:        &output,
+	}
+	if err := mgr.Install("composer-auth"); err != nil {
+		t.Fatal(err)
+	}
+	installed := filepath.Join(global, "composer-auth", "SKILL.md")
+	if _, err := os.Stat(installed); err != nil {
+		t.Fatalf("nested skill was not installed at flat destination: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(global, "composer", "auth")); !os.IsNotExist(err) {
+		t.Fatalf("nested skill was installed using source path: %v", err)
+	}
+
+	writeSkillNamed(t, sourceDir, "composer-auth", "Composer authentication.", "new\n")
+	output.Reset()
+	if err := mgr.Diff("composer-auth"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "+new") || !strings.Contains(output.String(), "-old") {
+		t.Fatalf("unexpected diff output: %s", output.String())
+	}
+
+	output.Reset()
+	if err := mgr.Update("composer-auth"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Updated composer-auth") {
+		t.Fatalf("unexpected update output: %s", output.String())
+	}
+	contents, err := os.ReadFile(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "new") {
+		t.Fatalf("nested skill was not updated: %s", contents)
+	}
+
+	if err := mgr.Uninstall("composer-auth"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(global, "composer-auth")); !os.IsNotExist(err) {
+		t.Fatalf("nested skill still exists after uninstall: %v", err)
+	}
+}
+
+func TestInstallNestedLocalSkillAndSkillSet(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repository")
+	writeSkillNamed(t, filepath.Join(repository, "skills", "noah", "test"), "noah-test", "Personal test workflow.", "# Test\n")
 	writeSkill(t, filepath.Join(repository, "skills", "code-review"), "Code review workflow.", "# Review\n")
 	configuration := `{
   "skillSets": [
-    {"name": "team", "description": "Team defaults.", "skills": ["code-review", "noah/test"]}
+    {"name": "team", "description": "Team defaults.", "skills": ["code-review", "noah-test"]}
   ]
 }`
 	if err := os.WriteFile(filepath.Join(repository, "skills.json"), []byte(configuration), 0o644); err != nil {
@@ -121,7 +177,7 @@ func TestInstallNamespacedSkillAndSkillSet(t *testing.T) {
 	}
 	for _, path := range []string{
 		filepath.Join(mgr.GlobalDir, "code-review", "SKILL.md"),
-		filepath.Join(mgr.GlobalDir, "noah", "test", "SKILL.md"),
+		filepath.Join(mgr.GlobalDir, "noah-test", "SKILL.md"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected installed skill at %s: %v", path, err)
@@ -131,34 +187,28 @@ func TestInstallNamespacedSkillAndSkillSet(t *testing.T) {
 	if err := mgr.List(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "noah/test") {
-		t.Fatalf("namespaced skill missing from list: %s", output.String())
-	}
-	if err := mgr.Uninstall("noah"); err == nil {
-		t.Fatal("expected namespace-only directory not to be uninstallable as a skill")
-	}
-	if _, err := os.Stat(filepath.Join(mgr.GlobalDir, "noah", "test", "SKILL.md")); err != nil {
-		t.Fatalf("uninstalling a namespace removed its child skill: %v", err)
+	if !strings.Contains(output.String(), "noah-test") {
+		t.Fatalf("nested local skill missing from list: %s", output.String())
 	}
 
-	writeSkill(t, filepath.Join(repository, "skills", "noah", "test"), "Personal test workflow.", "# Updated test\n")
+	writeSkillNamed(t, filepath.Join(repository, "skills", "noah", "test"), "noah-test", "Personal test workflow.", "# Updated test\n")
 	output.Reset()
-	if err := mgr.Update("noah/test"); err != nil {
+	if err := mgr.Update("noah-test"); err != nil {
 		t.Fatal(err)
 	}
-	contents, err := os.ReadFile(filepath.Join(mgr.GlobalDir, "noah", "test", "SKILL.md"))
+	contents, err := os.ReadFile(filepath.Join(mgr.GlobalDir, "noah-test", "SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(contents), "Updated test") {
-		t.Fatalf("namespaced skill was not updated: %s", contents)
+		t.Fatalf("nested local skill was not updated: %s", contents)
 	}
 
-	if err := mgr.Uninstall("noah/test"); err != nil {
+	if err := mgr.Uninstall("noah-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(mgr.GlobalDir, "noah")); !os.IsNotExist(err) {
-		t.Fatalf("empty namespace was not removed: %v", err)
+	if _, err := os.Stat(filepath.Join(mgr.GlobalDir, "noah-test")); !os.IsNotExist(err) {
+		t.Fatalf("nested local skill still exists after uninstall: %v", err)
 	}
 }
 
@@ -320,10 +370,14 @@ func TestDoctorReportsAvailableUpdateWithoutChangingFiles(t *testing.T) {
 
 func writeSkill(t *testing.T, dir, description, body string) {
 	t.Helper()
+	writeSkillNamed(t, dir, filepath.Base(dir), description, body)
+}
+
+func writeSkillNamed(t *testing.T, dir, name, description, body string) {
+	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	name := filepath.Base(dir)
 	contents := "---\nname: " + name + "\ndescription: " + description + "\n---\n\n" + body
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(contents), 0o644); err != nil {
 		t.Fatal(err)

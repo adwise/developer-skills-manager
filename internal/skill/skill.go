@@ -20,9 +20,8 @@ var (
 )
 
 type Metadata struct {
-	// ID is the slash-separated path used to address a skill in a catalog. For
-	// example, a skill in skills/noah/test has ID "noah/test", while Name is
-	// the name from its SKILL.md ("test").
+	// ID addresses a skill in a catalog using its frontmatter name.
+	// External entries may override it with an explicit manifest ID.
 	ID          string
 	Name        string
 	Description string
@@ -69,8 +68,8 @@ func Validate(dir string) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	if metadata.Name != name {
-		return Metadata{}, fmt.Errorf("SKILL.md name %q must match directory %q", metadata.Name, name)
+	if metadata.Name != name && metadata.Name != filepath.Base(filepath.Dir(abs))+"-"+name {
+		return Metadata{}, fmt.Errorf("SKILL.md name %q must match directory %q or parent-directory name %q", metadata.Name, name, filepath.Base(filepath.Dir(abs))+"-"+name)
 	}
 	metadata.ID = metadata.Name
 	metadata.Path = abs
@@ -136,9 +135,16 @@ func Discover(root string) ([]Metadata, error) {
 			if err != nil {
 				return err
 			}
-			metadata.ID = filepath.ToSlash(rel)
-			if !IsValidID(metadata.ID) {
-				return fmt.Errorf("invalid skill path %q; every folder must use lowercase letters, digits, and hyphens", metadata.ID)
+			packageID := filepath.ToSlash(rel)
+			if !IsValidID(packageID) {
+				return fmt.Errorf("invalid skill path %q; every folder must use lowercase letters, digits, and hyphens", packageID)
+			}
+			expectedName := filepath.Base(dir)
+			if filepath.Dir(dir) != rootAbs {
+				expectedName = filepath.Base(filepath.Dir(dir)) + "-" + expectedName
+			}
+			if metadata.Name != expectedName {
+				return fmt.Errorf("validate %s: SKILL.md name %q must match local catalog name %q", filepath.ToSlash(rel), metadata.Name, expectedName)
 			}
 			if other, exists := seen[metadata.ID]; exists {
 				return fmt.Errorf("duplicate skill ID %q in %s and %s", metadata.ID, other, metadata.Path)
