@@ -8,6 +8,39 @@ import (
 	"testing"
 )
 
+func TestRunDefaultsToInstaller(t *testing.T) {
+	isolateEnvironment(t)
+	for _, command := range []string{"", "tui", "install"} {
+		t.Run(command, func(t *testing.T) {
+			args := []string{"--home", t.TempDir()}
+			if command != "" {
+				args = append(args, command)
+			}
+			var stdout, stderr bytes.Buffer
+			status := RunWithIO(args, strings.NewReader("q"), &stdout, &stderr)
+			if status != 1 || !strings.Contains(stderr.String(), "no source repository configured") {
+				t.Fatalf("status %d; stderr: %s", status, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("unexpected output: %s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	isolateEnvironment(t)
+	for _, command := range []string{"--help", "-h", "help"} {
+		t.Run(command, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			status := Run([]string{command, "--home", t.TempDir()}, &stdout, &stderr)
+			if status != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Usage:") {
+				t.Fatalf("status %d; stdout: %s; stderr: %s", status, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunAcceptsGlobalOptionsAfterCommand(t *testing.T) {
 	isolateEnvironment(t)
 	root := t.TempDir()
