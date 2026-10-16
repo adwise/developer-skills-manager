@@ -341,6 +341,25 @@ func TestInstallOptionsReportsAvailableUpdates(t *testing.T) {
 	}
 }
 
+func TestDoctorAcceptsNestedSkillWithLeafName(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repository")
+	writeSkill(t, filepath.Join(repository, "skills", "adwise", "agent-browser"), "Browser automation.", "")
+	var output bytes.Buffer
+	mgr := Manager{
+		Repository: source.Repository{Source: repository},
+		GlobalDir:  filepath.Join(root, "global"),
+		LocalDir:   filepath.Join(root, "local"),
+		Out:        &output,
+	}
+	if err := mgr.Install("agent-browser"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Doctor(); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, output.String())
+	}
+}
+
 func TestDoctorReportsAvailableUpdateWithoutChangingFiles(t *testing.T) {
 	root := t.TempDir()
 	repository := filepath.Join(root, "repository")

@@ -35,6 +35,7 @@ func TestValidateAndChecksum(t *testing.T) {
 
 func TestDiscoverUsesExpectedLocalNamesForNestedSkills(t *testing.T) {
 	root := t.TempDir()
+	write(t, filepath.Join(root, "adwise", "agent-browser", "SKILL.md"), "---\nname: agent-browser\ndescription: Browse the web.\n---\n")
 	write(t, filepath.Join(root, "code-review", "SKILL.md"), "---\nname: code-review\ndescription: Review code.\n---\n")
 	write(t, filepath.Join(root, "noah", "test", "SKILL.md"), "---\nname: noah-test\ndescription: Noah's test skill.\n---\n")
 
@@ -42,7 +43,7 @@ func TestDiscoverUsesExpectedLocalNamesForNestedSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 2 || catalog[0].ID != "code-review" || catalog[1].ID != "noah-test" {
+	if len(catalog) != 3 || catalog[0].ID != "agent-browser" || catalog[1].ID != "code-review" || catalog[2].ID != "noah-test" {
 		t.Fatalf("unexpected catalog: %#v", catalog)
 	}
 }
@@ -75,7 +76,6 @@ func TestDiscoverRejectsUnexpectedLocalNames(t *testing.T) {
 		want      string
 	}{
 		"wrong root name":       {"arbitrary-name", "must match directory"},
-		"nested leaf name":      {"pull-request", "local catalog name"},
 		"nested arbitrary name": {"unrelated-name", "must match directory"},
 	} {
 		t.Run(name, func(t *testing.T) {
