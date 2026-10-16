@@ -14,6 +14,9 @@ import (
 	"github.com/adwise/developer-skills-manager/internal/tui"
 )
 
+// Version is set by release builds using -ldflags.
+var Version = "dev"
+
 func Run(arguments []string, stdout, stderr io.Writer) int {
 	return RunWithIO(arguments, os.Stdin, stdout, stderr)
 }
@@ -75,7 +78,7 @@ func RunWithIO(arguments []string, stdin io.Reader, stdout, stderr io.Writer) in
 	case "validate":
 		commandErr = oneOptional(commandArgs, false, mgr.Validate)
 	case "version":
-		fmt.Fprintln(stdout, "skills-manager dev")
+		fmt.Fprintln(stdout, "skills-manager", Version)
 		return 0
 	default:
 		fmt.Fprintf(stderr, "Unknown command %q.\n\n", command)

@@ -143,8 +143,8 @@ func Discover(root string) ([]Metadata, error) {
 			if filepath.Dir(dir) != rootAbs {
 				expectedName = filepath.Base(filepath.Dir(dir)) + "-" + expectedName
 			}
-			if metadata.Name != expectedName {
-				return fmt.Errorf("validate %s: SKILL.md name %q must match local catalog name %q", filepath.ToSlash(rel), metadata.Name, expectedName)
+			if metadata.Name != filepath.Base(dir) && metadata.Name != expectedName {
+				return fmt.Errorf("validate %s: SKILL.md name %q must match directory %q or local catalog name %q", filepath.ToSlash(rel), metadata.Name, filepath.Base(dir), expectedName)
 			}
 			if other, exists := seen[metadata.ID]; exists {
 				return fmt.Errorf("duplicate skill ID %q in %s and %s", metadata.ID, other, metadata.Path)

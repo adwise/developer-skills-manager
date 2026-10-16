@@ -8,7 +8,7 @@ A Git-native CLI for installing agent skills as plain files. Bring your own publ
 
 ### Homebrew (Adwise tap)
 
-After the stable formula is merged into the [Adwise tap](https://github.com/adwise/homebrew-brew):
+Install the stable release from the [Adwise tap](https://github.com/adwise/homebrew-brew):
 
 ```bash
 brew install adwise/brew/skills-manager
@@ -16,14 +16,30 @@ skills-manager init --source git@github.com:example/team-skills.git
 skills-manager
 ```
 
-Upgrade with `brew upgrade adwise/brew/skills-manager`. The stable formula pins a published Git commit so Homebrew can build reproducible bottles. Until bottles are published for your platform, installation builds from source with Go. While the tap or bottles remain private, follow the tap's authentication instructions; the public Go installation below does not require tap access.
+Upgrade with `brew update && brew upgrade --formula adwise/brew/skills-manager`. The stable formula pins a published release and its SHA-256 checksum. Until bottles are published for your platform, installation builds from source with Go. While the tap or bottles remain private, follow the tap's authentication instructions; the public Go installation below does not require tap access.
 
-If you previously installed with `--HEAD`, switch to stable by uninstalling and reinstalling the CLI. This does not remove your skills or configuration:
+For an installation made with `--HEAD`, explicitly fetch the latest commit when upgrading; `brew update` only refreshes Homebrew and its taps:
 
 ```bash
-brew uninstall skills-manager
+brew upgrade --formula --fetch-HEAD adwise/brew/skills-manager
+```
+
+Always use the full formula name: the unqualified name `skills-manager` can also refer to an unrelated Homebrew cask.
+
+To switch from `--HEAD` to stable, uninstall and reinstall the CLI. This does not remove your skills or configuration:
+
+```bash
+brew uninstall --formula adwise/brew/skills-manager
 brew install adwise/brew/skills-manager
 ```
+
+### Automatic releases
+
+Every push to `main` that passes tests, vet, and the installation smoke test publishes a GitHub release tagged `v0.1.<workflow run number>`. Pull requests do not publish releases. Re-running a successful workflow reuses its release rather than creating another version.
+
+The Adwise tap's `Update skills-manager release` workflow checks for new releases every 15 minutes (GitHub scheduling can be delayed), updates the stable formula and checksum, and commits to the tap's `main` branch. It also supports manual dispatch. Both repositories' workflows must be merged into `main` and Actions must be allowed to write repository contents; tap branch protection must permit its updater to push. No cross-repository token is needed because the CLI releases are public. Bottles are not automatically published by this updater; Homebrew can build from source.
+
+A stable install gets the newest release already synchronized into the tap, not necessarily the latest `main` commit. Use `--HEAD` if you explicitly want unreleased code. Existing HEAD installations are not switched to stable automatically.
 
 ### Go install (public, no Homebrew required)
 
@@ -114,9 +130,9 @@ description: A useful test workflow.
 ---
 ```
 
-The frontmatter `name` is always the catalog ID. A package directly under `skills/` must use its directory name (`skills/code-review/SKILL.md` uses `name: code-review`). A nested package uses its immediate parent and directory name joined by a hyphen (`skills/personal/test/SKILL.md` uses `name: personal-test`; `skills/git/pull-request/SKILL.md` uses `name: git-pull-request`). Use that ID in commands, skill sets, and dependencies.
+The frontmatter `name` is always the catalog ID. A package directly under `skills/` must use its directory name (`skills/code-review/SKILL.md` uses `name: code-review`). A nested package can use either its directory name (`skills/adwise/agent-browser/SKILL.md` uses `name: agent-browser`) or its immediate parent and directory name joined by a hyphen (`skills/personal/test/SKILL.md` uses `name: personal-test`; `skills/git/pull-request/SKILL.md` uses `name: git-pull-request`). Use that ID in commands, skill sets, and dependencies.
 
-Standalone validation also accepts a package whose name matches its leaf directory, so installed packages can be validated and checksummed under their full catalog ID. Local discovery requires the parent-prefixed form for nested packages. Explicit external IDs keep their namespace semantics and must end with the external package's frontmatter name. Names and path segments use lowercase letters, digits, and hyphens. Additional package files can be referenced using relative paths inside the package.
+Standalone validation also accepts a package whose name matches its leaf directory, so installed packages can be validated and checksummed under their full catalog ID. Local discovery accepts both forms for nested packages; frontmatter names must remain unique across the catalog. Explicit external IDs keep their namespace semantics and must end with the external package's frontmatter name. Names and path segments use lowercase letters, digits, and hyphens. Additional package files can be referenced using relative paths inside the package.
 
 An optional `skills.json` defines sets, skill dependencies, and pinned external skills:
 

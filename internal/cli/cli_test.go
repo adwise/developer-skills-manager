@@ -28,6 +28,18 @@ func TestRunDefaultsToInstaller(t *testing.T) {
 	}
 }
 
+func TestRunVersion(t *testing.T) {
+	isolateEnvironment(t)
+	previous := Version
+	t.Cleanup(func() { Version = previous })
+	Version = "0.1.42"
+	var stdout, stderr bytes.Buffer
+	status := Run([]string{"version", "--home", t.TempDir()}, &stdout, &stderr)
+	if status != 0 || stderr.Len() != 0 || stdout.String() != "skills-manager 0.1.42\n" {
+		t.Fatalf("status %d; stdout: %s; stderr: %s", status, stdout.String(), stderr.String())
+	}
+}
+
 func TestRunHelp(t *testing.T) {
 	isolateEnvironment(t)
 	for _, command := range []string{"--help", "-h", "help"} {
