@@ -35,7 +35,7 @@ brew install adwise/brew/skills-manager
 
 ### Automatic releases
 
-Every push to `main` that passes tests, vet, and the installation smoke test publishes a GitHub release tagged `v0.1.<workflow run number>`. Pull requests do not publish releases. Re-running a successful workflow reuses its release rather than creating another version.
+Every push to `main` that passes tests, vet, and the installation smoke test builds and publishes a GitHub release tagged `v0.1.<workflow run number>`. Releases include Linux binaries for `amd64` (x86-64) and `arm64`, and macOS (`darwin`) binaries for `arm64` (Apple Silicon), packaged with the README and license, plus `checksums.txt` with SHA-256 checksums. Pull requests do not publish releases. Re-running a successful workflow reuses its release and replaces its assets rather than creating another version.
 
 The Adwise tap's `Update skills-manager release` workflow checks for new releases every 15 minutes (GitHub scheduling can be delayed), updates the stable formula and checksum, and commits to the tap's `main` branch. It also supports manual dispatch. Both repositories' workflows must be merged into `main` and Actions must be allowed to write repository contents; tap branch protection must permit its updater to push. No cross-repository token is needed because the CLI releases are public. Bottles are not automatically published by this updater; Homebrew can build from source.
 
