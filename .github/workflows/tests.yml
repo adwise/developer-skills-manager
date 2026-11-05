@@ -37,13 +37,36 @@ jobs:
     concurrency:
       group: release
       cancel-in-progress: false
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build release archives
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            name="skills-manager_${os}_${arch}"
+            staging="$(mktemp -d)"
+            GOOS="$os" GOARCH="$arch" go build -trimpath -o "$staging/skills-manager" ./cmd/skills-manager
+            cp LICENSE README.md "$staging/"
+            tar -czf "dist/$name.tar.gz" -C "$staging" skills-manager LICENSE README.md
+            rm -rf "$staging"
+          done
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
       - name: Publish tested commit
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v0.1.${{ github.run_number }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes --draft
           fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release edit "$TAG" --draft=false
