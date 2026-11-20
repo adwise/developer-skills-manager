@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +19,14 @@ import (
 // Version is set by release builds using -ldflags.
 var Version = "dev"
 
+func reportCommandError(stderr io.Writer, err error) int {
+	fmt.Fprintf(stderr, "Error: %v\n", err)
+	if errors.Is(err, manager.ErrContributionPartial) {
+		return 3
+	}
+	return 1
+}
+
 func Run(arguments []string, stdout, stderr io.Writer) int {
 	return RunWithIO(arguments, os.Stdin, stdout, stderr)
 }
@@ -29,6 +39,16 @@ func RunWithIO(arguments []string, stdin io.Reader, stdout, stderr io.Writer) in
 	}
 	if len(args) == 0 {
 		args = []string{"tui"}
+	}
+	for _, arg := range args[1:] {
+		if arg == "--all" && args[0] != "update" && args[0] != "contribute" {
+			fmt.Fprintln(stderr, "Error: --all is only valid for update or contribute")
+			return 1
+		}
+		if arg == "--discard-local" && args[0] != "update" {
+			fmt.Fprintln(stderr, "Error: --discard-local is only valid for update")
+			return 1
+		}
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		usage(stdout)
@@ -44,15 +64,63 @@ func RunWithIO(arguments []string, stdin io.Reader, stdout, stderr io.Writer) in
 		Repository: source.Repository{Source: options.source, CacheDir: options.cache},
 		GlobalDir:  filepath.Join(options.home, ".agents", "skills", options.namespace),
 		LocalDir:   filepath.Join(workingDir, ".agents", "skills"),
+		StateDir:   filepath.Join(options.home, ".agents", ".skills-manager", options.namespace),
 		Out:        stdout,
 	}
 
 	command := args[0]
 	commandArgs := args[1:]
+	for _, arg := range commandArgs {
+		if arg == "--discard-local" {
+			var discardErr error
+			scopes := []sourceManager{{name: options.namespace, Manager: mgr}}
+			if len(options.sources) > 0 {
+				scopes, discardErr = configuredManagers(options, workingDir, stdout)
+			}
+			if discardErr == nil {
+				discardErr = runDiscard(scopes, options.from != "", commandArgs, stdin, stdout)
+			}
+			if discardErr != nil {
+				fmt.Fprintf(stderr, "Error: %v\n", discardErr)
+				return 1
+			}
+			return 0
+		}
+	}
+	if command == "update" {
+		for _, arg := range commandArgs {
+			if arg == "--all" {
+				if len(commandArgs) != 1 {
+					fmt.Fprintln(stderr, "Error: --all cannot be combined with a skill name or other update options")
+					return 1
+				}
+				commandArgs = nil
+				break
+			}
+		}
+	}
+	if len(options.sources) > 0 && command != "init" && command != "config" && command != "source" && command != "validate" && command != "version" {
+		if err := runSources(options, command, commandArgs, workingDir, stdin, stdout); err != nil {
+			return reportCommandError(stderr, err)
+		}
+		return 0
+	}
 	var commandErr error
 	switch command {
+	case "source":
+		commandErr = runSource(options, commandArgs, stdout)
 	case "init":
 		commandErr = noExtraArgs(commandArgs, func() error { return initialize(options, stdout) })
+	case "config":
+		if len(commandArgs) != 3 || commandArgs[0] != "set" || commandArgs[1] != "repo" {
+			commandErr = fmt.Errorf("usage: skills-manager config set repo PATH")
+		} else {
+			commandErr = setSourceRepo(options.home, commandArgs[2], options.from, stdout)
+		}
+	case "status":
+		commandErr = oneOptional(commandArgs, false, mgr.Status)
+	case "contribute":
+		commandErr = runContribute(commandArgs, options.repo, stdin, stdout, mgr)
 	case "available", "search":
 		commandErr = mgr.Available(strings.Join(commandArgs, " "))
 	case "list":
@@ -72,7 +140,20 @@ func RunWithIO(arguments []string, stdin io.Reader, stdout, stderr io.Writer) in
 	case "update":
 		commandErr = oneOptional(commandArgs, false, mgr.Update)
 	case "diff":
-		commandErr = oneOptional(commandArgs, false, mgr.Diff)
+		local := false
+		var names []string
+		for _, arg := range commandArgs {
+			if arg == "--local" {
+				local = true
+			} else {
+				names = append(names, arg)
+			}
+		}
+		if local {
+			commandErr = oneOptional(names, false, mgr.DiffLocal)
+		} else {
+			commandErr = oneOptional(names, false, mgr.Diff)
+		}
 	case "doctor":
 		commandErr = noExtraArgs(commandArgs, mgr.Doctor)
 	case "validate":
@@ -86,17 +167,22 @@ func RunWithIO(arguments []string, stdin io.Reader, stdout, stderr io.Writer) in
 		return 2
 	}
 	if commandErr != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", commandErr)
-		return 1
+		return reportCommandError(stderr, commandErr)
 	}
 	return 0
 }
 
 type options struct {
-	source    string
-	home      string
-	cache     string
-	namespace string
+	source            string
+	home              string
+	cache             string
+	namespace         string
+	repo              string
+	from              string
+	repoOverride      string
+	sourceOverride    bool
+	namespaceOverride bool
+	sources           map[string]sourceConfiguration
 }
 
 func parseArguments(arguments []string, stderr io.Writer) (options, []string, error) {
@@ -120,7 +206,7 @@ func parseArguments(arguments []string, stderr io.Writer) (options, []string, er
 	var positional []string
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
-		if argument == "--source" || argument == "--home" || argument == "--cache" || argument == "--namespace" {
+		if argument == "--source" || argument == "--home" || argument == "--cache" || argument == "--namespace" || argument == "--from" || argument == "--repo" {
 			if index+1 >= len(arguments) {
 				return options{}, nil, fmt.Errorf("%s requires a value", argument)
 			}
@@ -128,7 +214,7 @@ func parseArguments(arguments []string, stderr io.Writer) (options, []string, er
 			index++
 			continue
 		}
-		if strings.HasPrefix(argument, "--source=") || strings.HasPrefix(argument, "--home=") || strings.HasPrefix(argument, "--cache=") || strings.HasPrefix(argument, "--namespace=") {
+		if strings.HasPrefix(argument, "--source=") || strings.HasPrefix(argument, "--home=") || strings.HasPrefix(argument, "--cache=") || strings.HasPrefix(argument, "--namespace=") || strings.HasPrefix(argument, "--from=") || strings.HasPrefix(argument, "--repo=") {
 			flags = append(flags, argument)
 			continue
 		}
@@ -141,12 +227,32 @@ func parseArguments(arguments []string, stderr io.Writer) (options, []string, er
 	set.StringVar(&defaults.home, "home", defaults.home, "user home containing .agents/skills and configuration")
 	set.StringVar(&defaults.cache, "cache", defaults.cache, "remote repository cache")
 	set.StringVar(&defaults.namespace, "namespace", defaults.namespace, "installation namespace (default: skills-manager)")
+	set.StringVar(&defaults.from, "from", "", "configured source name")
+	set.StringVar(&defaults.repoOverride, "repo", "", "contribution checkout override")
 	if err := set.Parse(flags); err != nil {
 		return options{}, nil, err
 	}
+	defaults.sourceOverride = defaults.source != ""
+	defaults.namespaceOverride = defaults.namespace != ""
 	saved, err := readConfiguration(defaults.home)
 	if err != nil {
 		return options{}, nil, err
+	}
+	defaults.sources = saved.Sources
+	defaults.repo = saved.Repo
+	if defaults.repoOverride != "" {
+		defaults.repo = defaults.repoOverride
+	}
+	if defaults.from != "" {
+		entry, exists := saved.Sources[defaults.from]
+		if !exists {
+			return options{}, nil, fmt.Errorf("unknown source %q", defaults.from)
+		}
+		saved.Source, saved.Namespace, saved.Repo = entry.Source, entry.Namespace, entry.Repo
+		defaults.repo = entry.Repo
+		if defaults.repoOverride != "" {
+			defaults.repo = defaults.repoOverride
+		}
 	}
 	if defaults.source == "" {
 		defaults.source = saved.Source
@@ -185,13 +291,19 @@ func oneOptional(args []string, required bool, fn func(string) error) error {
 }
 
 func runInstaller(stdin io.Reader, stdout io.Writer, mgr manager.Manager) error {
-	catalog, installed, updates, err := mgr.InstallOptionsWithUpdates()
+	catalog, installed, updates, states, err := mgr.InstallOptionsWithStatus()
 	if err != nil {
 		return err
 	}
-	selected, err := tui.RunInstallerWithUpdates(stdin, stdout, catalog.Skills, catalog.Sets, installed, updates)
+	selected, err := tui.RunInstallerWithStatus(stdin, stdout, catalog.Skills, catalog.Sets, installed, updates, states)
 	if err != nil {
 		return fmt.Errorf("run installer: %w", err)
+	}
+	if len(selected.Discards) > 0 {
+		return applyDiscardSelection([]sourceManager{{Manager: mgr}}, []tui.InstallerSelection{selected}, stdin, stdout)
+	}
+	if err := mgr.Preflight(selected.Installs, selected.Updates, selected.Removals); err != nil {
+		return err
 	}
 	if len(selected.Removals) > 0 {
 		if err := mgr.UninstallMany(selected.Removals); err != nil {
@@ -209,6 +321,53 @@ func runInstaller(stdin io.Reader, stdout io.Writer, mgr manager.Manager) error 
 	return nil
 }
 
+func runContribute(args []string, repo string, stdin io.Reader, stdout io.Writer, mgr manager.Manager) error {
+	var names []string
+	yes := false
+	all := false
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--all":
+			all = true
+		case args[i] == "--yes":
+			yes = true
+		case args[i] == "--repo":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--repo requires a path")
+			}
+			i++
+			repo = args[i]
+		case strings.HasPrefix(args[i], "--repo="):
+			repo = strings.TrimPrefix(args[i], "--repo=")
+		case strings.HasPrefix(args[i], "-"):
+			return fmt.Errorf("unknown contribute option %s", args[i])
+		default:
+			names = append(names, args[i])
+		}
+	}
+	confirm := func() (bool, error) {
+		if yes {
+			return true, nil
+		}
+		fmt.Fprint(stdout, "Copy these changes to the checkout? [y/N] ")
+		line, err := bufio.NewReader(stdin).ReadString('\n')
+		if err != nil && err != io.EOF {
+			return false, err
+		}
+		line = strings.ToLower(strings.TrimSpace(line))
+		return line == "y" || line == "yes", nil
+	}
+	if all {
+		if len(names) != 0 {
+			return fmt.Errorf("--all cannot be combined with a skill name")
+		}
+		return mgr.ContributeAll(repo, confirm)
+	}
+	return oneOptional(names, true, func(name string) error {
+		return mgr.Contribute(name, repo, confirm)
+	})
+}
+
 func envOr(name, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 		return value
@@ -217,34 +376,45 @@ func envOr(name, fallback string) string {
 }
 
 func usage(out io.Writer) {
-	fmt.Fprint(out, `Skills Manager installs agent skills from your Git repository as plain files.
+	fmt.Fprint(out, `Usage: skills-manager [command] [options]
+Run without a command to open the interactive installer.
 
-Usage:
-  skills-manager                            Open the interactive installer (default)
-  skills-manager --help                     Show this help
-  skills-manager init --source <url-or-path>  Save your source repository
-  skills-manager available [query]          List or search available skills
-  skills-manager sets                       List skill sets
-  skills-manager list                       List global and repository skills
-  skills-manager install                    Open the interactive installer
-  skills-manager install <name|@set>...      Install skills or skill sets
-  skills-manager tui                        Open the interactive installer
-  skills-manager uninstall <name>           Remove a global skill
-  skills-manager update [name]              Update global skills
-  skills-manager diff [name]                Review changes before updating
-  skills-manager doctor                     Check sources and installations
-  skills-manager validate [path]            Validate skills or a repository
-  skills-manager version                    Show the CLI version
+Manage skills:
+  available [query]             Browse or search the catalog
+  sets                          List skill sets
+  list                          List installed skills
+  tui                           Open the interactive installer
+  install [name|@set]...        Install skills or sets; omit names for the TUI
+  uninstall <name>              Remove an installed skill
+  status [name]                 Show local and upstream changes
+  diff [name] [--local]         Preview upstream changes or your local edits
+  update [name|--all]           Update without overwriting local edits
+  update <name|--all> --discard-local [--yes]
+                                Overwrite local edits without a backup
 
-Options (before or after the command):
-  --source <url-or-path>  Source Git repository or local checkout
-  --namespace <name>     Directory under ~/.agents/skills (default: skills-manager)
-  --home <path>          Override the user home and configuration location
-  --cache <path>         Override the Git cache directory
+Contribute per file (preview first; checkout edits and untracked ignored/cache files stay put).
+  Conflicts are skipped; exit 3 means review unresolved paths/packages. Nothing is staged.
+  skills-manager config set repo ~/dev/team-skills --from default
+  skills-manager contribute default/code-review
+  skills-manager contribute --all --from default
+  --repo PATH overrides the saved checkout; --yes skips confirmation.
 
-Configuration: ~/.config/skills-manager/config.json
-Precedence: command-line options > environment > saved configuration > defaults.
-Environment:
-  SKILLS_MANAGER_SOURCE, SKILLS_MANAGER_NAMESPACE, SKILLS_MANAGER_HOME, SKILLS_MANAGER_CACHE
+Sources:
+  init --source <url-or-path>   Configure a source
+  source add NAME --source <url-or-path> [--namespace NAME] [--repo PATH]
+  source list                   List configured sources
+  source remove NAME            Forget a source; keep installed skills
+
+Other commands:
+  doctor                        Check sources and installations
+  validate [path]               Validate a skill or catalog
+  version                       Show the CLI version
+
+Options:
+  --from NAME                   Limit the command to one configured source
+  --source URL/PATH             Override the Git source
+  --namespace NAME              Select the install directory under ~/.agents/skills/
+  --home PATH, --cache PATH     Override the home or cache directory
+  --help                        Show this help
 `)
 }

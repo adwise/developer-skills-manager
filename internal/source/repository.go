@@ -192,6 +192,7 @@ func (r Repository) Registry(refresh bool) (CatalogData, string, error) {
 			return CatalogData{}, root, fmt.Errorf("duplicate skill ID %q in %s and %s", external.ID, other, metadata.Path)
 		}
 		metadata.ID = external.ID
+		metadata.External = true
 		seen[metadata.ID] = metadata.Path
 		skills = append(skills, metadata)
 	}

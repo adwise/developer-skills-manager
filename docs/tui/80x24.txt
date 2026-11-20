@@ -1,0 +1,24 @@
+SKILLS / Manage
+╭[All sources]╮ ╭ team ╮ ╭ personal ╮ ╭ empty ╮
+╯             ╰─────────────────────────────────────────────────────────────────
+Skills 15 · Sets 1
+      Name                       Status
+── SKILLS ──────────────────────────────────────────────────────────────────────
+  [ ] personal/notes             available
+  [x] team/agent-browser         install (queued)
+  [x] team/code-review           update (queued)
+  [ ] team/composer-auth         available
+> [ ] team/frontend-figma        available
+  [R] team/frontend-tailwind     discard (queued)
+  [ ] team/git-branching         available
+  [ ] team/git-commits           available
+2–9 of 16
+────────────────────────────────────────────────────────────────────────────────
+DETAIL / team/frontend-figma
+Project tools and guidance for frontend-figma.
+
+Status: available
+Queue: space install
+Queue (all)  1 install · 1 update · 1 remove · 1 discard
+space select install/update · d remove · r discard/update · enter review
+tab/shift+tab sources · b blackjack · q/esc/ctrl+c cancel

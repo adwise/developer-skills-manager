@@ -1,0 +1,32 @@
+SKILLS / Manage
+╭[All sources]╮ ╭ team ╮ ╭ personal ╮ ╭ empty ╮
+╯             ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────
+Skills 15 · Sets 1
+      Name                       Status
+── SETS ──────────────────────────────────────────────────────────────── │ DETAIL / team/frontend-figma
+  [R] team/@frontend             set · 1/2 installed · 1 queued          │ Project tools and guidance for
+                                                                         │ frontend-figma.
+── SKILLS ────────────────────────────────────────────────────────────── │
+  [ ] personal/notes             available                               │
+  [x] team/agent-browser         install (queued)                        │ Status: available
+  [x] team/code-review           update (queued)                         │ Queue: space install
+  [ ] team/composer-auth         available                               │
+> [ ] team/frontend-figma        available                               │
+  [R] team/frontend-tailwind     discard (queued)                        │
+  [ ] team/git-branching         available                               │
+  [ ] team/git-commits           available                               │
+  [-] team/github-cli            remove (queued)                         │
+  [ ] team/github-pull-requests  available                               │
+  [ ] team/jira-management       available                               │
+  [ ] team/performance-triage    available                               │
+  [ ] team/web-fetch             available                               │
+  [ ] team/web-search            available                               │
+  [ ] team/workspace-management  available                               │
+                                                                         │
+                                                                         │
+                                                                         │
+                                                                         │
+1–16 of 16
+Queue (all)  1 install · 1 update · 1 remove · 1 discard
+space select install/update · d remove · r discard/update · enter review · tab/shift+tab sources · b blackjack
+q/esc/ctrl+c cancel

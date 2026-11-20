@@ -27,6 +27,9 @@ jobs:
         run: |
           go install ./cmd/skills-manager
           "$GOBIN/skills-manager" --help
+          test "$("$GOBIN/skills-manager" version)" = "skills-manager dev"
+          go build -ldflags "-X github.com/adwise/developer-skills-manager/internal/cli.Version=v0.1.42" -o "$GOBIN/skills-manager" ./cmd/skills-manager
+          test "$("$GOBIN/skills-manager" version)" = "skills-manager v0.1.42"
 
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -38,6 +41,8 @@ jobs:
       group: release
       cancel-in-progress: false
     timeout-minutes: 15
+    env:
+      TAG: v0.1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -54,16 +59,20 @@ jobs:
             arch="${target#*/}"
             name="skills-manager_${os}_${arch}"
             staging="$(mktemp -d)"
-            GOOS="$os" GOARCH="$arch" go build -trimpath -o "$staging/skills-manager" ./cmd/skills-manager
+            GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-X github.com/adwise/developer-skills-manager/internal/cli.Version=${TAG}" -o "$staging/skills-manager" ./cmd/skills-manager
             cp LICENSE README.md "$staging/"
             tar -czf "dist/$name.tar.gz" -C "$staging" skills-manager LICENSE README.md
             rm -rf "$staging"
           done
           (cd dist && sha256sum *.tar.gz > checksums.txt)
+          native="skills-manager_$(go env GOHOSTOS)_$(go env GOHOSTARCH)"
+          staging="$(mktemp -d)"
+          tar -xzf "dist/$native.tar.gz" -C "$staging"
+          test "$("$staging/skills-manager" version)" = "skills-manager $TAG"
+          rm -rf "$staging"
       - name: Publish tested commit
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.1.${{ github.run_number }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes --draft

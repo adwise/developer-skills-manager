@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,7 @@ func TestInitPersistsSourceAndNamespace(t *testing.T) {
 		t.Fatal("accepted a source without a skills directory")
 	}
 	after, err := readConfiguration(home)
-	if err != nil || after != saved {
+	if err != nil || !reflect.DeepEqual(after, saved) {
 		t.Fatalf("failed init changed configuration: %+v, %v", after, err)
 	}
 

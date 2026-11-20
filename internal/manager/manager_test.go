@@ -375,7 +375,7 @@ func TestDoctorReportsAvailableUpdateWithoutChangingFiles(t *testing.T) {
 	if err := mgr.Doctor(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "has an update available") {
+	if !strings.Contains(output.String(), "pull-request: upstream") {
 		t.Fatalf("doctor did not report update: %s", output.String())
 	}
 	contents, err := os.ReadFile(filepath.Join(global, "pull-request", "SKILL.md"))

@@ -18,7 +18,36 @@ type Manager struct {
 	Repository source.Repository
 	GlobalDir  string
 	LocalDir   string
+	StateDir   string
 	Out        io.Writer
+	preflight  bool
+}
+
+// Preflight checks the same protections as execution, without changing packages
+// or baselines. Execution repeats these checks; this is not a filesystem lock.
+func (m Manager) Preflight(installs, updates, removals []string) error {
+	m.preflight = true
+	m.Out = io.Discard
+	if len(removals) > 0 {
+		if err := m.UninstallMany(removals); err != nil {
+			return err
+		}
+	}
+	if len(installs) > 0 {
+		if err := m.InstallMany(installs); err != nil {
+			return err
+		}
+	}
+	if len(updates) > 0 {
+		return m.UpdateMany(updates)
+	}
+	return nil
+}
+
+func (m Manager) PreflightUpdate(name string) error {
+	m.preflight = true
+	m.Out = io.Discard
+	return m.Update(name)
 }
 
 func (m Manager) Available(query string) error {
@@ -46,7 +75,7 @@ func (m Manager) Available(query string) error {
 }
 
 func (m Manager) List() error {
-	global, err := discoverIfExists(m.GlobalDir)
+	global, err := discoverInstalledIfExists(m.GlobalDir)
 	if err != nil {
 		return err
 	}
@@ -79,7 +108,7 @@ func (m Manager) InstallMany(selectors []string) error {
 			return err
 		}
 	}
-	catalog, _, err := m.Repository.Registry(true)
+	catalog, root, err := m.Repository.Registry(true)
 	if err != nil {
 		return err
 	}
@@ -120,14 +149,30 @@ func (m Manager) InstallMany(selectors []string) error {
 		}
 	}
 
+	if m.preflight {
+		return nil
+	}
 	for _, name := range names {
 		item := items[name]
 		target, _ := m.globalTarget(name)
 		if _, err := os.Stat(target); err == nil {
+			// Do not erase a known baseline (and hence local history) on install.
+			_, base, err := m.readBaseline(name)
+			if err != nil {
+				return err
+			}
+			if base == "" {
+				if err := m.saveBaseline(item, root); err != nil {
+					return err
+				}
+			}
 			fmt.Fprintf(m.Out, "✓ %s is already installed.\n", name)
 			continue
 		}
 		if err := replacePackage(item.Path, target); err != nil {
+			return err
+		}
+		if err := m.saveBaseline(item, root); err != nil {
 			return err
 		}
 		fmt.Fprintf(m.Out, "✓ Installed %s in %s\n", name, target)
@@ -165,13 +210,34 @@ func (m Manager) UninstallMany(names []string) error {
 		} else if err != nil {
 			return fmt.Errorf("inspect installed skill %s: %w", name, err)
 		}
+		_, base, err := m.readBaseline(name)
+		if err != nil {
+			return err
+		}
+		upstream := ""
+		if base == "" {
+			catalog, _, err := m.Repository.Registry(true)
+			if err != nil {
+				return err
+			}
+			upstream = indexCatalog(catalog.Skills)[name].Path
+		}
+		if err := m.protect(name, target, upstream); err != nil {
+			return err
+		}
 		installations = append(installations, installation{name: name, target: target})
 		seen[name] = true
 	}
 
+	if m.preflight {
+		return nil
+	}
 	for _, item := range installations {
 		if err := os.RemoveAll(item.target); err != nil {
 			return fmt.Errorf("uninstall %s: %w", item.name, err)
+		}
+		if err := os.RemoveAll(m.stateDir(item.name)); err != nil {
+			return err
 		}
 		removeEmptyParents(filepath.Dir(item.target), m.GlobalDir)
 		fmt.Fprintf(m.Out, "✓ Uninstalled %s\n", item.name)
@@ -212,7 +278,7 @@ func (m Manager) updateSelected(names []string) error {
 		fmt.Fprintln(m.Out, "No global skills are installed.")
 		return nil
 	}
-	catalog, _, err := m.Repository.Registry(true)
+	catalog, root, err := m.Repository.Registry(true)
 	if err != nil {
 		return err
 	}
@@ -230,15 +296,32 @@ func (m Manager) updateSelected(names []string) error {
 		if err := m.ensureNamespaceAvailable(id); err != nil {
 			return err
 		}
+		if _, exists := available[id]; !exists {
+			return fmt.Errorf("installed skill %q no longer exists in the source repository", id)
+		}
 		if _, err := os.Stat(target); err == nil {
 			if _, err := skill.Validate(target); err != nil {
 				return fmt.Errorf("inspect installed skill %s: %w", id, err)
+			}
+			same, err := samePackage(target, available[id].Path)
+			if err != nil {
+				return err
+			}
+			// Already-identical updates do not discard edits and can safely
+			// establish a new baseline after a contribution reaches upstream.
+			if !same {
+				if err := m.protect(id, target, available[id].Path); err != nil {
+					return err
+				}
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("inspect installed skill %s: %w", id, err)
 		}
 	}
 
+	if m.preflight {
+		return nil
+	}
 	updated := 0
 	for _, skillName := range names {
 		item, exists := available[skillName]
@@ -254,6 +337,9 @@ func (m Manager) updateSelected(names []string) error {
 			if err := replacePackage(sourceDir, target); err != nil {
 				return err
 			}
+			if err := m.saveBaseline(item, root); err != nil {
+				return err
+			}
 			fmt.Fprintf(m.Out, "✓ Installed %s in %s\n", skillName, target)
 			updated++
 			continue
@@ -263,10 +349,16 @@ func (m Manager) updateSelected(names []string) error {
 			return err
 		}
 		if same {
+			if err := m.saveBaseline(item, root); err != nil {
+				return err
+			}
 			fmt.Fprintf(m.Out, "✓ %s is up to date.\n", skillName)
 			continue
 		}
 		if err := replacePackage(sourceDir, target); err != nil {
+			return err
+		}
+		if err := m.saveBaseline(item, root); err != nil {
 			return err
 		}
 		fmt.Fprintf(m.Out, "↑ Updated %s\n", skillName)
@@ -342,9 +434,13 @@ func (m Manager) Doctor() error {
 		return fmt.Errorf("doctor found %d problem(s)", failures+1)
 	}
 	availableByID := indexCatalog(catalog.Skills)
+	identity, err := source.Identity(m.Repository.Source)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintf(m.Out, "✓ Source repository: %s\n", m.Repository.Source)
 
-	installed, err := discoverIfExists(m.GlobalDir)
+	installed, err := discoverInstalledIfExists(m.GlobalDir)
 	if err != nil {
 		fmt.Fprintf(m.Out, "✗ Global skills: %v\n", err)
 		failures++
@@ -356,14 +452,12 @@ func (m Manager) Doctor() error {
 				failures++
 				continue
 			}
-			same, err := samePackage(item.Path, available.Path)
+			state, err := m.packageStatus(item.ID, item.Path, available.Path, true, identity)
 			if err != nil {
 				fmt.Fprintf(m.Out, "✗ %s: %v\n", item.ID, err)
 				failures++
-			} else if same {
-				fmt.Fprintf(m.Out, "✓ %s is valid and up to date\n", item.ID)
 			} else {
-				fmt.Fprintf(m.Out, "↑ %s has an update available\n", item.ID)
+				fmt.Fprintf(m.Out, "✓ %s: %s\n", item.ID, state)
 			}
 		}
 	}
@@ -473,27 +567,42 @@ func (m Manager) InstallOptions() (source.CatalogData, map[string]bool, error) {
 }
 
 func (m Manager) InstallOptionsWithUpdates() (source.CatalogData, map[string]bool, map[string]bool, error) {
+	catalog, installed, updates, _, err := m.InstallOptionsWithStatus()
+	return catalog, installed, updates, err
+}
+
+func (m Manager) InstallOptionsWithStatus() (source.CatalogData, map[string]bool, map[string]bool, map[string]string, error) {
 	catalog, _, err := m.Repository.Registry(true)
 	if err != nil {
-		return source.CatalogData{}, nil, nil, err
+		return source.CatalogData{}, nil, nil, nil, err
 	}
-	items, err := discoverIfExists(m.GlobalDir)
+	items, err := discoverInstalledIfExists(m.GlobalDir)
 	if err != nil {
-		return source.CatalogData{}, nil, nil, err
+		return source.CatalogData{}, nil, nil, nil, err
 	}
+	identity, err := source.Identity(m.Repository.Source)
+	if err != nil {
+		return source.CatalogData{}, nil, nil, nil, err
+	}
+	states := make(map[string]string)
 	available := indexCatalog(catalog.Skills)
 	installed := make(map[string]bool, len(items))
 	updates := make(map[string]bool)
 	for _, item := range items {
 		installed[item.ID] = true
 		candidate, exists := available[item.ID]
+		state, err := m.packageStatus(item.ID, item.Path, candidate.Path, exists, identity)
+		if err != nil {
+			return source.CatalogData{}, nil, nil, nil, err
+		}
+		states[item.ID] = state
 		if !exists {
 			catalog.Skills = append(catalog.Skills, item)
 			continue
 		}
 		same, err := samePackage(item.Path, candidate.Path)
 		if err != nil {
-			return source.CatalogData{}, nil, nil, err
+			return source.CatalogData{}, nil, nil, nil, err
 		}
 		if !same {
 			updates[item.ID] = true
@@ -506,7 +615,7 @@ func (m Manager) InstallOptionsWithUpdates() (source.CatalogData, map[string]boo
 		}
 		dependencies, err := catalog.ResolveDependencies([]string{item.ID})
 		if err != nil {
-			return source.CatalogData{}, nil, nil, err
+			return source.CatalogData{}, nil, nil, nil, err
 		}
 		for _, id := range dependencies {
 			if !installed[id] {
@@ -517,7 +626,7 @@ func (m Manager) InstallOptionsWithUpdates() (source.CatalogData, map[string]boo
 	sort.Slice(catalog.Skills, func(left, right int) bool {
 		return catalog.Skills[left].ID < catalog.Skills[right].ID
 	})
-	return catalog, installed, updates, nil
+	return catalog, installed, updates, states, nil
 }
 
 func (m Manager) Sets() error {
@@ -551,7 +660,7 @@ func (m Manager) selectedInstalled(name string) ([]string, error) {
 		}
 		return []string{name}, nil
 	}
-	items, err := discoverIfExists(m.GlobalDir)
+	items, err := discoverInstalledIfExists(m.GlobalDir)
 	if err != nil {
 		return nil, err
 	}
@@ -560,6 +669,13 @@ func (m Manager) selectedInstalled(name string) ([]string, error) {
 		names = append(names, item.ID)
 	}
 	return names, nil
+}
+
+func discoverInstalledIfExists(root string) ([]skill.Metadata, error) {
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return nil, nil
+	}
+	return skill.DiscoverInstalled(root)
 }
 
 func discoverIfExists(root string) ([]skill.Metadata, error) {
@@ -647,6 +763,9 @@ func (m Manager) globalTarget(name string) (string, error) {
 	if err := ensureChild(m.GlobalDir, target); err != nil {
 		return "", err
 	}
+	if err := noSymlinkPath(m.GlobalDir, target); err != nil {
+		return "", err
+	}
 	return target, nil
 }
 
@@ -712,7 +831,9 @@ func replacePackage(sourceDir, target string) error {
 		return fmt.Errorf("create temporary install directory: %w", err)
 	}
 	defer os.RemoveAll(tempRoot)
-	temp := filepath.Join(tempRoot, filepath.Base(target))
+	// Preserve the destination's parent name for nested catalog packages whose
+	// frontmatter name is parent-leaf (also used when contributing back).
+	temp := filepath.Join(tempRoot, filepath.Base(root), filepath.Base(target))
 
 	if err := copyPackage(sourceDir, temp); err != nil {
 		return err

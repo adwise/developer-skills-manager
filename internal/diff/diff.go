@@ -39,12 +39,36 @@ func Directories(installed, available, name string) (string, error) {
 
 	var output strings.Builder
 	for _, path := range ordered {
-		oldData := oldFiles[path]
-		newData := newFiles[path]
-		if bytes.Equal(oldData, newData) {
+		oldData, oldExists := oldFiles[path]
+		newData, newExists := newFiles[path]
+		oldExecutable, newExecutable := false, false
+		if oldExists {
+			info, err := os.Stat(filepath.Join(installed, filepath.FromSlash(path)))
+			if err != nil {
+				return "", err
+			}
+			oldExecutable = info.Mode()&0o111 != 0
+		}
+		if newExists {
+			info, err := os.Stat(filepath.Join(available, filepath.FromSlash(path)))
+			if err != nil {
+				return "", err
+			}
+			newExecutable = info.Mode()&0o111 != 0
+		}
+		if oldExists == newExists && bytes.Equal(oldData, newData) && oldExecutable == newExecutable {
 			continue
 		}
-		fmt.Fprintf(&output, "--- installed/%s/%s\n+++ available/%s/%s\n", name, path, name, path)
+		fmt.Fprintf(&output, "--- before/%s/%s\n+++ after/%s/%s\n", name, path, name, path)
+		if !oldExists {
+			output.WriteString("File added\n")
+		}
+		if !newExists {
+			output.WriteString("File deleted\n")
+		}
+		if oldExecutable != newExecutable {
+			fmt.Fprintf(&output, "Executable: %t → %t\n", oldExecutable, newExecutable)
+		}
 		if bytes.IndexByte(oldData, 0) >= 0 || bytes.IndexByte(newData, 0) >= 0 {
 			output.WriteString("Binary files differ\n")
 			continue
