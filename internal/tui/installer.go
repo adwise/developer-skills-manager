@@ -3,11 +3,13 @@ package tui
 import (
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/adwise/developer-skills-manager/internal/skill"
 	"github.com/adwise/developer-skills-manager/internal/source"
@@ -21,6 +23,7 @@ const (
 )
 
 type row struct {
+	group       string
 	kind        rowKind
 	id          string
 	description string
@@ -29,6 +32,7 @@ type row struct {
 
 // InstallerSelection contains the installs, updates, and removals selected in the TUI.
 type InstallerSelection struct {
+	Discards []string
 	Installs []string
 	Updates  []string
 	Removals []string
@@ -36,19 +40,26 @@ type InstallerSelection struct {
 
 // InstallerModel is the Bubble Tea model for the multi-select installer.
 type InstallerModel struct {
-	rows      []row
-	installed map[string]bool
-	updates   map[string]bool
-	selected  map[string]bool
-	removals  map[string]bool
-	cursor    int
-	width     int
-	height    int
-	status    string
-	complete  bool
-	cancelled bool
-	playing   bool
-	game      blackjack
+	rows         []row
+	tabs         []sourceTab
+	activeTab    int
+	installed    map[string]bool
+	updates      map[string]bool
+	states       map[string]string
+	selected     map[string]bool
+	removals     map[string]bool
+	discards     map[string]bool
+	review       bool
+	reviewScroll int
+	cursor       int
+	width        int
+	height       int
+	status       string
+	color        bool
+	complete     bool
+	cancelled    bool
+	playing      bool
+	game         blackjack
 }
 
 func NewInstallerModel(skills []skill.Metadata, sets []source.SkillSet, installed map[string]bool) InstallerModel {
@@ -56,6 +67,10 @@ func NewInstallerModel(skills []skill.Metadata, sets []source.SkillSet, installe
 }
 
 func NewInstallerModelWithUpdates(skills []skill.Metadata, sets []source.SkillSet, installed, updates map[string]bool) InstallerModel {
+	return NewInstallerModelWithStatus(skills, sets, installed, updates, nil)
+}
+
+func NewInstallerModelWithStatus(skills []skill.Metadata, sets []source.SkillSet, installed, updates map[string]bool, states map[string]string) InstallerModel {
 	rows := make([]row, 0, len(skills)+len(sets))
 	for _, set := range sets {
 		rows = append(rows, row{
@@ -72,8 +87,10 @@ func NewInstallerModelWithUpdates(skills []skill.Metadata, sets []source.SkillSe
 		rows:      rows,
 		installed: installed,
 		updates:   updates,
+		states:    states,
 		selected:  make(map[string]bool),
 		removals:  make(map[string]bool),
+		discards:  make(map[string]bool),
 		width:     100,
 		height:    24,
 	}
@@ -87,6 +104,29 @@ func (m InstallerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = message.Width
 		m.height = message.Height
 	case tea.KeyMsg:
+		if m.review {
+			switch message.String() {
+			case "esc", "n":
+				m.review = false
+			case "ctrl+c", "q":
+				m.cancelled = true
+				return m, tea.Quit
+			case "up", "k":
+				m.reviewScroll = max(0, m.reviewScroll-1)
+			case "down", "j":
+				m.reviewScroll = min(max(0, len(m.reviewLines())-1), m.reviewScroll+1)
+			case "home", "g":
+				m.reviewScroll = 0
+			case "end", "G":
+				m.reviewScroll = max(0, len(m.reviewLines())-1)
+			case "c":
+				if m.queueCount() > 0 {
+					m.complete = true
+					return m, tea.Quit
+				}
+			}
+			return m, nil
+		}
 		if m.playing && message.String() != "ctrl+c" {
 			switch message.String() {
 			case "q", "esc":
@@ -103,6 +143,10 @@ func (m InstallerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc", "q":
 			m.cancelled = true
 			return m, tea.Quit
+		case "tab":
+			m.switchTab(1)
+		case "shift+tab":
+			m.switchTab(-1)
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -119,108 +163,41 @@ func (m InstallerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case " ":
 			m.toggleCurrent()
-			m.status = ""
+		case "r":
+			m.toggleDiscard()
 		case "d", "delete":
 			m.toggleRemoval()
-			m.status = ""
 		case "enter":
-			if len(m.Selected()) == 0 && len(m.SelectedUpdates()) == 0 && len(m.SelectedRemovals()) == 0 {
-				m.status = "Select at least one skill to install, update, or remove."
-				break
-			}
-			m.complete = true
-			return m, tea.Quit
+			m.review = true
+			m.reviewScroll = 0
 		}
 	}
 	return m, nil
 }
 
-func (m InstallerModel) View() string {
-	if m.playing {
-		return m.game.view()
+func (m InstallerModel) rowStatus(item row) string {
+	if item.kind != skillRow {
+		return ""
 	}
-	var output strings.Builder
-	output.WriteString("Manage skills\n\n")
-	if len(m.rows) == 0 {
-		output.WriteString("No skills are available.\n\nb blackjack • q quit\n")
-		return output.String()
+	if m.discards[item.id] {
+		return "DISCARD local changes and update (queued)"
 	}
-
-	pageSize := m.height - 9
-	if pageSize < 3 {
-		pageSize = 3
+	if m.removals[item.id] {
+		return "remove (queued)"
 	}
-	start := 0
-	if m.cursor >= pageSize {
-		start = m.cursor - pageSize + 1
-	}
-	end := start + pageSize
-	if end > len(m.rows) {
-		end = len(m.rows)
-	}
-	if end-start < pageSize && start > 0 {
-		start = end - pageSize
-		if start < 0 {
-			start = 0
+	if m.selected[item.id] {
+		if m.installed[item.id] {
+			return "update (queued)"
 		}
+		return "install (queued)"
 	}
-
-	previousKind := rowKind(255)
-	for index := start; index < end; index++ {
-		item := m.rows[index]
-		if item.kind != previousKind {
-			if index != start {
-				output.WriteByte('\n')
-			}
-			if item.kind == setRow {
-				output.WriteString("Skill sets\n")
-			} else {
-				output.WriteString("Skills\n")
-			}
-			previousKind = item.kind
-		}
-
-		cursor := "  "
-		if index == m.cursor {
-			cursor = "> "
-		}
-		mark := "[ ]"
-		label := item.id
-		if item.kind == setRow {
-			label = "@" + label
-			if m.setCovered(item.skills) {
-				mark = "[x]"
-			}
-		} else if m.removals[item.id] {
-			mark = "[-]"
-		} else if m.selected[item.id] {
-			mark = "[x]"
-		} else if m.updates[item.id] {
-			mark = "[↑]"
-		} else if m.installed[item.id] {
-			mark = "[✓]"
-		}
-		line := fmt.Sprintf("%s%s %s", cursor, mark, label)
-		if item.kind == skillRow && m.removals[item.id] {
-			line += " — remove"
-		} else if item.kind == skillRow && m.updates[item.id] {
-			line += " — update available"
-		}
-		if item.description != "" {
-			line += " — " + strings.Join(strings.Fields(item.description), " ")
-		}
-		output.WriteString(truncate(line, m.width))
-		output.WriteByte('\n')
+	if m.states[item.id] != "" {
+		return m.states[item.id]
 	}
-
-	if start > 0 || end < len(m.rows) {
-		fmt.Fprintf(&output, "\n%d–%d of %d\n", start+1, end, len(m.rows))
+	if m.updates[item.id] {
+		return "update available"
 	}
-	if m.status != "" {
-		output.WriteString("\n" + m.status + "\n")
-	}
-	output.WriteString("\n↑/↓ move • space select • d remove • enter apply • b blackjack • q cancel\n")
-	return output.String()
+	return ""
 }
 
 func (m InstallerModel) Selected() []string {
@@ -259,18 +236,31 @@ func (m InstallerModel) SelectedRemovals() []string {
 func (m InstallerModel) Cancelled() bool { return m.cancelled }
 
 func (m *InstallerModel) toggleCurrent() {
+	m.status = "Selection changed; enter reviews the queue."
 	if len(m.rows) == 0 {
+		m.status = "No skills to select."
 		return
 	}
 	item := m.rows[m.cursor]
 	if item.kind == skillRow {
 		if m.selectable(item.id) {
 			delete(m.removals, item.id)
+			delete(m.discards, item.id)
 			m.selected[item.id] = !m.selected[item.id]
+		} else {
+			m.status = "No update available; r queues discard/update, d queues removal."
 		}
 		return
 	}
 
+	eligible := false
+	for _, id := range item.skills {
+		eligible = eligible || m.selectable(id)
+	}
+	if !eligible {
+		m.status = "No install or update available in this set."
+		return
+	}
 	selectSet := !m.setCovered(item.skills)
 	for _, id := range item.skills {
 		if !m.selectable(id) {
@@ -278,6 +268,7 @@ func (m *InstallerModel) toggleCurrent() {
 		}
 		if selectSet {
 			delete(m.removals, id)
+			delete(m.discards, id)
 			m.selected[id] = true
 		} else {
 			delete(m.selected, id)
@@ -287,17 +278,26 @@ func (m *InstallerModel) toggleCurrent() {
 
 func (m *InstallerModel) toggleRemoval() {
 	if len(m.rows) == 0 {
+		m.status = "No installed skill to remove."
 		return
 	}
 	item := m.rows[m.cursor]
-	if item.kind != skillRow || !m.installed[item.id] {
+	if item.kind != skillRow {
+		m.status = "Sets cannot be removed; focus an installed skill and press d."
+		return
+	}
+	if !m.installed[item.id] {
+		m.status = "Not installed; nothing to remove."
 		return
 	}
 	if m.removals[item.id] {
 		delete(m.removals, item.id)
+		m.status = "Removal unqueued; no files changed."
 		return
 	}
+	m.status = "Removal queued; enter reviews. Local edits remain protected."
 	delete(m.selected, item.id)
+	delete(m.discards, item.id)
 	m.removals[item.id] = true
 }
 
@@ -323,8 +323,21 @@ func RunInstaller(input io.Reader, output io.Writer, skills []skill.Metadata, se
 }
 
 func RunInstallerWithUpdates(input io.Reader, output io.Writer, skills []skill.Metadata, sets []source.SkillSet, installed, updates map[string]bool) (InstallerSelection, error) {
+	return RunInstallerWithStatus(input, output, skills, sets, installed, updates, nil)
+}
+
+func RunInstallerWithStatus(input io.Reader, output io.Writer, skills []skill.Metadata, sets []source.SkillSet, installed, updates map[string]bool, states map[string]string) (InstallerSelection, error) {
+	return runInstallerModel(input, output, NewInstallerModelWithStatus(skills, sets, installed, updates, states))
+}
+
+func runInstallerModel(input io.Reader, output io.Writer, initial InstallerModel) (InstallerSelection, error) {
+	file, ok := output.(*os.File)
+	if !ok || !term.IsTerminal(file.Fd()) {
+		return InstallerSelection{}, fmt.Errorf("interactive installer requires a terminal; use list, install <name>, update <name>, or uninstall <name>")
+	}
+	initial.color = terminalColor()
 	program := tea.NewProgram(
-		NewInstallerModelWithUpdates(skills, sets, installed, updates),
+		initial,
 		tea.WithInput(input),
 		tea.WithOutput(output),
 		tea.WithAltScreen(),
@@ -341,16 +354,40 @@ func RunInstallerWithUpdates(input io.Reader, output io.Writer, skills []skill.M
 		return InstallerSelection{}, nil
 	}
 	return InstallerSelection{
+		Discards: model.SelectedDiscards(),
 		Installs: model.Selected(),
 		Updates:  model.SelectedUpdates(),
 		Removals: model.SelectedRemovals(),
 	}, nil
 }
 
+func terminalColor() bool {
+	_, noColor := os.LookupEnv("NO_COLOR")
+	return !noColor && os.Getenv("TERM") != "dumb"
+}
+
 func truncate(value string, width int) string {
-	if width <= 1 || utf8.RuneCountInString(value) <= width {
+	if width <= 0 {
 		return value
 	}
-	runes := []rune(value)
-	return string(runes[:width-1]) + "…"
+	return ansi.Truncate(value, width, "…")
+}
+
+func wrapLines(text string, width int) []string {
+	var lines []string
+	for _, paragraph := range strings.Split(text, "\n") {
+		line := ""
+		for _, word := range strings.Fields(paragraph) {
+			if line != "" && width > 0 && ansi.StringWidth(line+" "+word) > width {
+				lines = append(lines, line)
+				line = ""
+			}
+			if line != "" {
+				line += " "
+			}
+			line += word
+		}
+		lines = append(lines, truncate(line, width))
+	}
+	return lines
 }

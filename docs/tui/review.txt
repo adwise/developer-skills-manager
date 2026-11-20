@@ -1,0 +1,24 @@
+SKILLS / Review queue
+4 queued across all sources
+────────────────────────────────────────────────────────────────────────────────
+INSTALL · 1
+  team/install
+
+UPDATE · 1
+  team/update
+
+REMOVE · 1
+  personal/remove
+
+DISCARD + UPDATE · 1
+  personal/discard
+
+
+
+
+
+Discard: local changes will be permanently overwritten without backup.
+Dependency diffs and a separate confirmation follow.
+────────────────────────────────────────────────────────────────────────────────
+↑/↓ scroll · home/end jump
+c confirm · esc/n back · q/ctrl+c cancel

@@ -26,6 +26,7 @@ type Metadata struct {
 	Name        string
 	Description string
 	Path        string
+	External    bool // Explicit manifest entry, not a catalog-owned package.
 }
 
 func IsValidName(name string) bool {
@@ -102,7 +103,13 @@ func Validate(dir string) (Metadata, error) {
 	return metadata, nil
 }
 
-func Discover(root string) ([]Metadata, error) {
+func Discover(root string) ([]Metadata, error) { return discover(root, false) }
+
+// DiscoverInstalled uses installation-relative paths as IDs. Manifest aliases
+// (including nested IDs) need not equal a package's frontmatter name.
+func DiscoverInstalled(root string) ([]Metadata, error) { return discover(root, true) }
+
+func discover(root string, installed bool) ([]Metadata, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -145,6 +152,9 @@ func Discover(root string) ([]Metadata, error) {
 			}
 			if metadata.Name != filepath.Base(dir) && metadata.Name != expectedName {
 				return fmt.Errorf("validate %s: SKILL.md name %q must match directory %q or local catalog name %q", filepath.ToSlash(rel), metadata.Name, filepath.Base(dir), expectedName)
+			}
+			if installed {
+				metadata.ID = packageID
 			}
 			if other, exists := seen[metadata.ID]; exists {
 				return fmt.Errorf("duplicate skill ID %q in %s and %s", metadata.ID, other, metadata.Path)
